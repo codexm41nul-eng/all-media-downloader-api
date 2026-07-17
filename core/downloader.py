@@ -88,11 +88,13 @@ def extract_with_ytdlp(url: str, platform: str) -> dict:
         raise DownloaderError("No data returned from extractor")
 
     video_url = info.get("url")
+    resolved_headers = info.get("http_headers") or {}
 
     if not video_url and info.get("formats"):
         formats = info.get("formats")
         best_format = formats[-1]
         video_url = best_format.get("url")
+        resolved_headers = best_format.get("http_headers") or resolved_headers
     else:
         best_format = None
 
@@ -135,6 +137,11 @@ def extract_with_ytdlp(url: str, platform: str) -> dict:
         "video_url": video_url,
         "thumbnail_url": info.get("thumbnail"),
         "quality": info.get("format_note") or PREFERRED_QUALITY,
+        # yt-dlp's own resolved request headers for this url — TikTok's CDN
+        # expects these exact headers (not a generic Referer/Origin guess).
+        # Not returned to external API callers; used internally by the
+        # proxy-video endpoint to fetch the file correctly.
+        "_resolved_headers": resolved_headers,
     }
 
     return result

@@ -48,4 +48,5 @@ def get_tiktok_video(
         "video_url": result["video_url"],
         "thumbnail_url": result.get("thumbnail_url"),
         "quality": result.get("quality"),
+        "proxy_token": result.get("proxy_token"),
     }
