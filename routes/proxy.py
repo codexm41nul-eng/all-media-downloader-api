@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 import requests
 
 from core.auth import verify_api_key
+from core import resolve_cache
 
 router = APIRouter()
 
@@ -64,15 +65,38 @@ _DEFAULT_HEADERS = {
 
 @router.get("/api/proxy-video")
 def proxy_video(
-    video_url: str = Query(..., description="Direct CDN url returned by a resolve endpoint"),
+    video_url: str = Query("", description="Direct CDN url returned by a resolve endpoint (fallback if no proxy_token)"),
     platform: str = Query("", description="Platform the video_url belongs to (tiktok/facebook/instagram)"),
+    proxy_token: str = Query("", description="Token from /api/download's proxy_token field — carries yt-dlp's exact resolved headers"),
     api_key: str = Depends(verify_api_key),
 ):
     headers = _PLATFORM_HEADERS.get((platform or "").lower(), _DEFAULT_HEADERS)
+    fetch_url = video_url
+
+    # Prefer the cached (url, headers) pair from resolve time — these are
+    # yt-dlp's own exact headers for this CDN url, which is what TikTok's
+    # CDN actually checks. A guessed generic Referer/Origin is not enough;
+    # this was confirmed by 502s happening within ~1s of resolve, ruling
+    # out link expiry as the cause.
+    if proxy_token:
+        cached = resolve_cache.get(proxy_token)
+        if cached:
+            cached_url, cached_headers = cached
+            fetch_url = cached_url
+            if cached_headers:
+                headers = cached_headers
+        elif not fetch_url:
+            raise HTTPException(
+                status_code=410,
+                detail="This download link has expired. Please send the link again.",
+            )
+
+    if not fetch_url:
+        raise HTTPException(status_code=400, detail="No video_url or valid proxy_token provided")
 
     try:
         upstream = requests.get(
-            video_url,
+            fetch_url,
             headers=headers,
             stream=True,
             timeout=45,
