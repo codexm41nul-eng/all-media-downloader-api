@@ -21,14 +21,49 @@ class DownloaderError(Exception):
     pass
 
 
+_SIZE_CHECK_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Linux; Android 11; Pixel 5) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+    ),
+    "Accept": "*/*",
+}
+
+
 def _get_size_via_head(video_url: str):
+    # Plain requests.head() with no headers gets rejected or answered
+    # without Content-Length by some CDNs (this was the cause of
+    # Facebook downloads showing "unknown" size). Sending browser-like
+    # headers, and falling back to a ranged GET for CDNs that don't
+    # support HEAD properly, is more reliable.
     try:
-        resp = requests.head(video_url, timeout=8, allow_redirects=True)
+        resp = requests.head(
+            video_url, timeout=8, allow_redirects=True, headers=_SIZE_CHECK_HEADERS
+        )
         content_length = resp.headers.get("Content-Length")
         if content_length:
             return int(content_length)
     except Exception:
         pass
+
+    try:
+        headers = {**_SIZE_CHECK_HEADERS, "Range": "bytes=0-0"}
+        resp = requests.get(
+            video_url, timeout=8, allow_redirects=True, headers=headers, stream=True
+        )
+        content_range = resp.headers.get("Content-Range")
+        if content_range and "/" in content_range:
+            total = content_range.rsplit("/", 1)[-1]
+            if total.isdigit():
+                return int(total)
+        content_length = resp.headers.get("Content-Length")
+        if content_length and resp.status_code != 206:
+            # Full (non-partial) response — Content-Length here is the
+            # real total size.
+            return int(content_length)
+    except Exception:
+        pass
+
     return None
 
 
